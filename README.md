@@ -3,7 +3,7 @@
 一个用于查询 Clash/V2Ray 订阅剩余流量的 AstrBot 插件。
 
 <p align="center">
-  <img src="https://count.getloli.com/get/@astrbot_plugin_reflection?theme=gelbooru-h" alt="访问计数" />
+  <img src="https://count.getloli.com/get/@astrbot_plugin_magic_traffic?theme=gelbooru-h" alt="访问计数" />
 </p>
 
 ## 功能特性
