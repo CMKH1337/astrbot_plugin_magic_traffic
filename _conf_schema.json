@@ -1,0 +1,39 @@
+{
+  "subscriptions": {
+    "type": "template_list",
+    "description": "VPN 订阅列表",
+    "hint": "点击添加订阅后，分别填写订阅名称、订阅链接和 User-Agent，无需手写 JSON 数组。",
+    "templates": {
+      "subscription": {
+        "name": "订阅链接",
+        "hint": "适用于 Clash/V2Ray 订阅链接；User-Agent 通常保持 clash 即可。",
+        "display_item": "name",
+        "hide_hint_in_list": true,
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "订阅名称",
+            "default": "我的VPN"
+          },
+          "url": {
+            "type": "text",
+            "description": "订阅链接",
+            "hint": "请填写完整的 http 或 https 订阅地址。",
+            "default": ""
+          },
+          "user_agent": {
+            "type": "string",
+            "description": "请求时使用的 User-Agent",
+            "default": "clash"
+          }
+        }
+      }
+    },
+    "default": []
+  },
+  "auto_convert_unit": {
+    "type": "bool",
+    "description": "自动转换流量单位",
+    "default": true
+  }
+}
