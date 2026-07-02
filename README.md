@@ -1,0 +1,1 @@
+# astrbot_plugin_magic_traffic
