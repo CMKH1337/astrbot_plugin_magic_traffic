@@ -33,10 +33,6 @@
 - **url**: Clash 订阅链接（必须支持流量查询）
 - **user_agent**: 请求时使用的 User-Agent，默认为 "clash"
 
-### 命令前缀 (command_prefix)
-
-触发流量查询的命令，默认为 `流量`
-
 ### 自动转换单位 (auto_convert_unit)
 
 是否自动将流量转换为合适的单位（KB/MB/GB/TB），默认为 `true`
