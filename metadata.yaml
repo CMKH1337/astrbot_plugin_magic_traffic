@@ -1,7 +1,7 @@
 name: astrbot_plugin_vpn_traffic
 display_name: VPN流量查询
 desc: 查询 Clash/V2Ray 订阅的剩余流量信息。
-version: v1.0.0
+version: v1.0.1
 author: CMKH
 repo: https://github.com/CMKH1337/astrbot_plugin_magic_traffic
 astrbot_version: ">=4.16,<5"
