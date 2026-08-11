@@ -2,13 +2,6 @@
 
 一个用于查询 Clash/V2Ray 订阅剩余流量的 AstrBot 插件。
 
-<p align="center">
-  <img
-    src="https://count.getloli.com/@astrbot_plugin_magic_traffic?theme=gelbooru&padding=7"
-    alt="访问计数"
-  />
-</p>
-
 ## 功能特性
 
 -  支持多个订阅链接管理
