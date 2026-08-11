@@ -2,28 +2,35 @@
   "subscriptions": {
     "type": "template_list",
     "description": "VPN 订阅列表",
-    "hint": "点击添加订阅后，分别填写订阅名称、订阅链接和 User-Agent，无需手写 JSON 数组。",
+    "hint": "每项订阅必须填写拥有者 ID。用户只能查询与自己 ID 完全匹配的订阅。",
     "templates": {
       "subscription": {
         "name": "订阅链接",
-        "hint": "适用于 Clash/V2Ray 订阅链接；User-Agent 通常保持 clash 即可。",
+        "hint": "适用于返回 subscription-userinfo 响应头的 Clash 或 V2Ray 订阅。",
         "display_item": "name",
         "hide_hint_in_list": true,
         "items": {
           "name": {
             "type": "string",
             "description": "订阅名称",
-            "default": "我的VPN"
+            "default": "CMKH1337"
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "订阅拥有者的uid",
+            "hint": "填写 AstrBot 消息事件中的发送者 ID。",
+            "default": ""
           },
           "url": {
             "type": "text",
             "description": "订阅链接",
-            "hint": "请填写完整的 http 或 https 订阅地址。",
+            "hint": "请填写完整的 http 或 https 订阅地址。请保护好个人订阅",
             "default": ""
           },
           "user_agent": {
             "type": "string",
-            "description": "请求时使用的 User-Agent",
+            "description": "请求使用的 User-Agent",
+            "hint": "通常可使用 clash，也可按服务商要求填写 clash-verge/v2.5.2 等值。",
             "default": "clash"
           }
         }
@@ -35,5 +42,17 @@
     "type": "bool",
     "description": "自动转换流量单位",
     "default": true
+  },
+  "allow_group_add": {
+    "type": "bool",
+    "description": "允许在群聊中添加订阅",
+    "hint": "默认关闭。开启后，订阅链接可能出现在群聊记录中，请谨慎使用。",
+    "default": false
+  },
+  "max_user_subscriptions": {
+    "type": "int",
+    "description": "每个用户最多保存的订阅数量",
+    "hint": "用于限制配置增长，建议保持较小值。",
+    "default": 10
   }
 }

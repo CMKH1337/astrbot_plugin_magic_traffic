@@ -1,221 +1,210 @@
-import json
+﻿from __future__ import annotations
+
+import asyncio
+from typing import Dict, Optional
 
 import aiohttp
-from datetime import datetime
-from typing import Any, Dict, List, Optional
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
+try:
+    from .traffic_utils import (
+        format_traffic_help,
+        format_traffic_info,
+        get_owned_subscriptions,
+        is_traffic_help_request,
+        normalize_subscriptions,
+        parse_traffic_headers,
+        validate_subscription_url,
+    )
+except ImportError:
+    from traffic_utils import (
+        format_traffic_help,
+        format_traffic_info,
+        get_owned_subscriptions,
+        is_traffic_help_request,
+        normalize_subscriptions,
+        parse_traffic_headers,
+        validate_subscription_url,
+    )
+
 
 @register(
     "astrbot_plugin_vpn_traffic",
-    "tiger",
-    "查询 Clash/V2Ray 订阅的剩余流量信息",
-    "v1.0.0",
+    "CMKH",
+    "按拥有者查询 Clash 或 V2Ray 订阅流量",
+    "v1.2.2",
 )
 class VPNTrafficPlugin(Star):
-    """查询 Clash/V2Ray 订阅剩余流量。"""
+    """仅允许订阅拥有者查询自己的 Clash 或 V2Ray 订阅流量。"""
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        
-        # 调试：打印所有配置键和原始配置
-        print("=" * 50)
-        print("VPN流量插件配置调试信息")
-        print("=" * 50)
-        print(f"配置对象类型: {type(config)}")
-        print(f"配置对象内容: {config}")
-        
-        raw_subscriptions = config.get("subscriptions", [])
-        print(f"原始 subscriptions: {raw_subscriptions}")
-        print(f"subscriptions 类型: {type(raw_subscriptions)}")
-        print("=" * 50)
-        
-        logger.info(f"[VPN流量插件] 原始 subscriptions 配置: {raw_subscriptions}")
-        logger.info(f"[VPN流量插件] subscriptions 类型: {type(raw_subscriptions)}")
-        
-        self.subscriptions = self.normalize_subscriptions(raw_subscriptions)
+        self.subscriptions = normalize_subscriptions(config.get("subscriptions", []))
         self.auto_convert_unit = bool(config.get("auto_convert_unit", True))
-        
-        print(f"标准化后的订阅数量: {len(self.subscriptions)}")
-        print(f"标准化后的订阅: {self.subscriptions}")
-        print("=" * 50)
-        
-        logger.info(f"VPN流量查询插件已加载，已配置 {len(self.subscriptions)} 个订阅")
-        logger.info(f"[VPN流量插件] 标准化后的订阅: {self.subscriptions}")
+        self.allow_group_add = bool(config.get("allow_group_add", False))
+        self.max_user_subscriptions = max(int(config.get("max_user_subscriptions", 10) or 10), 1)
+        self._subscription_lock = asyncio.Lock()
+        logger.info(
+            f"VPN 流量查询插件已加载，已配置 {len(self.subscriptions)} 个订阅"
+        )
+
+    @filter.command("\u6dfb\u52a0\u8ba2\u9605", alias={"add_subscription", "add-subscription"})
+    async def add_subscription_command(
+        self,
+        event: AstrMessageEvent,
+        subscription_name: str = "",
+        url: str = "",
+        user_agent: str = "clash",
+    ):
+        """Add a subscription owned by the current sender."""
+        group_id = str(event.get_group_id() or "").strip()
+        if group_id and not self.allow_group_add:
+            yield event.plain_result("\u51fa\u4e8e\u5b89\u5168\u8003\u8651\uff0c\u6dfb\u52a0\u8ba2\u9605\u8bf7\u4f7f\u7528\u79c1\u804a\u3002")
+            return
+
+        owner_id = str(event.get_sender_id()).strip()
+        name = str(subscription_name or "").strip()
+        normalized_url = validate_subscription_url(url)
+        normalized_user_agent = str(user_agent or "clash").strip() or "clash"
+
+        if not name or not normalized_url:
+            yield event.plain_result(
+                "\u7528\u6cd5\uff1a\u6dfb\u52a0\u8ba2\u9605 <\u540d\u79f0> <\u8ba2\u9605\u94fe\u63a5> [User-Agent]\n"
+                "\u793a\u4f8b\uff1a\u6dfb\u52a0\u8ba2\u9605 \u4e3b\u8ba2\u9605 https://example.com/sub clash"
+            )
+            return
+        if len(name) > 64:
+            yield event.plain_result("\u8ba2\u9605\u540d\u79f0\u4e0d\u80fd\u8d85\u8fc7 64 \u4e2a\u5b57\u7b26\u3002")
+            return
+        if len(normalized_user_agent) > 256:
+            yield event.plain_result("User-Agent \u4e0d\u80fd\u8d85\u8fc7 256 \u4e2a\u5b57\u7b26\u3002")
+            return
+
+        subscription = {
+            "__template_key": "subscription",
+            "name": name,
+            "owner_id": owner_id,
+            "url": normalized_url,
+            "user_agent": normalized_user_agent,
+        }
+
+        async with self._subscription_lock:
+            owned_subscriptions = get_owned_subscriptions(self.subscriptions, owner_id)
+            if len(owned_subscriptions) >= self.max_user_subscriptions:
+                yield event.plain_result(
+                    f"\u6bcf\u4e2a\u7528\u6237\u6700\u591a\u4fdd\u5b58 {self.max_user_subscriptions} \u4e2a\u8ba2\u9605\u3002"
+                )
+                return
+
+            if any(item.get("name") == name for item in owned_subscriptions):
+                yield event.plain_result(f"\u4f60\u5df2\u7ecf\u6dfb\u52a0\u8fc7\u540d\u4e3a\u201c{name}\u201d\u7684\u8ba2\u9605\u3002")
+                return
+
+            self.subscriptions.append(subscription)
+            self.config["subscriptions"] = self.subscriptions
+            try:
+                self.config.save_config()
+            except Exception as error:
+                self.subscriptions.pop()
+                logger.error(
+                    "Failed to save a user-added subscription, error type: %s",
+                    type(error).__name__,
+                )
+                yield event.plain_result("\u8ba2\u9605\u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002")
+                return
+
+        yield event.plain_result(
+            f"\u8ba2\u9605\u201c{name}\u201d\u5df2\u6dfb\u52a0\u3002\n"
+            "\u73b0\u5728\u53ef\u4ee5\u53d1\u9001\uff1a\u6d41\u91cf \u6216 \u6d41\u91cf <\u540d\u79f0> \u6765\u67e5\u8be2\u3002"
+        )
 
     @filter.command("流量")
-    async def query_all_traffic(self, event: AstrMessageEvent, subscription_name: Optional[str] = None):
-        """查询 VPN 订阅剩余流量。"""
-        result = await self.query_traffic(subscription_name)
+    async def query_traffic_command(
+        self,
+        event: AstrMessageEvent,
+        subscription_name: Optional[str] = None,
+    ):
+        """查询当前账号拥有的订阅流量。"""
+        if is_traffic_help_request(subscription_name):
+            yield event.plain_result(format_traffic_help())
+            return
+
+        sender_id = str(event.get_sender_id()).strip()
+        result = await self.query_traffic(sender_id, subscription_name)
         yield event.plain_result(result)
-    
-    def normalize_subscriptions(self, subscriptions: Any) -> List[Dict[str, str]]:
-        if isinstance(subscriptions, str):
-            try:
-                subscriptions = json.loads(subscriptions)
-            except json.JSONDecodeError:
-                logger.warning("subscriptions 配置不是有效的 JSON 字符串")
-                return []
 
-        if isinstance(subscriptions, dict):
-            subscriptions = [subscriptions]
-
-        if not isinstance(subscriptions, list):
-            logger.warning(f"subscriptions 配置格式错误，期望 list，实际为 {type(subscriptions)}")
-            return []
-
-        normalized = []
-        for subscription in subscriptions:
-            if not isinstance(subscription, dict):
-                logger.warning(f"忽略格式错误的订阅配置: {subscription}")
-                continue
-            url = str(subscription.get("url", "")).strip()
-            if not url:
-                continue
-            normalized.append({
-                "name": str(subscription.get("name", "未命名订阅")).strip() or "未命名订阅",
-                "url": url,
-                "user_agent": str(subscription.get("user_agent", "clash")).strip() or "clash",
-            })
-        return normalized
-
-    async def query_traffic(self, subscription_name: Optional[str] = None) -> str:
-        """查询流量信息"""
+    async def query_traffic(
+        self,
+        owner_id: str,
+        subscription_name: Optional[str] = None,
+    ) -> str:
+        """查询指定拥有者可见的流量信息。"""
         if not self.subscriptions:
-            return "未配置任何订阅链接，请先在插件配置中添加订阅。"
+            return "管理员尚未配置订阅。"
+
+        owned_subscriptions = get_owned_subscriptions(self.subscriptions, owner_id)
+        if not owned_subscriptions:
+            return f"当前账号未绑定订阅。\n你的用户 ID：{owner_id}"
 
         if subscription_name:
-            target_sub = None
-            for sub in self.subscriptions:
-                if sub.get("name") == subscription_name:
-                    target_sub = sub
-                    break
+            target = next(
+                (
+                    subscription
+                    for subscription in owned_subscriptions
+                    if subscription.get("name") == subscription_name
+                ),
+                None,
+            )
+            if target is None:
+                return "未找到属于你的同名订阅。"
+            owned_subscriptions = [target]
 
-            if not target_sub:
-                names = "、".join(sub.get("name", "未命名订阅") for sub in self.subscriptions)
-                return f"未找到名为「{subscription_name}」的订阅。可用订阅：{names}"
-
-            return await self.fetch_traffic_info(target_sub)
-
-        results = []
-        for sub in self.subscriptions:
-            results.append(await self.fetch_traffic_info(sub))
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            results = [
+                await self.fetch_traffic_info(session, subscription)
+                for subscription in owned_subscriptions
+            ]
 
         return "\n\n".join(results)
 
-    async def fetch_traffic_info(self, subscription: Dict) -> str:
-        """获取单个订阅的流量信息"""
+    async def fetch_traffic_info(
+        self,
+        session: aiohttp.ClientSession,
+        subscription: Dict[str, str],
+    ) -> str:
+        """获取单项订阅的流量信息。"""
         name = subscription.get("name", "未命名订阅")
         url = subscription.get("url", "")
         user_agent = subscription.get("user_agent", "clash")
 
-        if not url:
-            return f"{name}: 订阅链接为空"
+        safe_url = validate_subscription_url(url)
+        if not safe_url:
+            return "{}\uff1a\u8ba2\u9605\u5730\u5740\u65e0\u6548\u6216\u4e0d\u5141\u8bb8\u8bbf\u95ee".format(name)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                headers = {"User-Agent": user_agent}
-                async with session.get(url, headers=headers, timeout=10) as response:
-                    if response.status != 200:
-                        return f"{name}: 请求失败 (HTTP {response.status})"
+            headers = {"User-Agent": user_agent}
+            async with session.get(safe_url, headers=headers) as response:
+                if response.status != 200:
+                    return f"{name}：请求失败，HTTP {response.status}"
 
-                    traffic_info = self.parse_traffic_headers(response.headers)
+                traffic_info = parse_traffic_headers(response.headers)
+                if not traffic_info:
+                    return f"{name}：订阅未返回流量信息"
 
-                    if not traffic_info:
-                        return f"{name}: 订阅链接未返回流量信息"
+                return format_traffic_info(
+                    name,
+                    traffic_info,
+                    auto_convert_unit=self.auto_convert_unit,
+                )
+        except aiohttp.ClientError as error:
+            logger.error(f"请求订阅 {name} 失败，错误类型：{type(error).__name__}")
+            return f"{name}：网络请求失败"
+        except Exception as error:
+            logger.error(f"查询订阅 {name} 失败，错误类型：{type(error).__name__}")
+            return f"{name}：查询失败"
 
-                    return self.format_traffic_info(name, traffic_info)
-
-        except aiohttp.ClientError as e:
-            logger.error(f"请求订阅 {name} 失败: {e}")
-            return f"{name}: 网络请求失败 - {str(e)}"
-        except Exception as e:
-            logger.error(f"查询订阅 {name} 时发生错误: {e}")
-            return f"{name}: 查询失败 - {str(e)}"
-
-    def parse_traffic_headers(self, headers) -> Optional[Dict[str, int]]:
-        """
-        解析响应头中的流量信息
-        常见的流量信息头：
-        - subscription-userinfo: upload=xxx; download=xxx; total=xxx; expire=xxx
-        - Subscription-UserInfo: upload=xxx; download=xxx; total=xxx; expire=xxx
-        """
-        possible_headers = [
-            "subscription-userinfo",
-            "Subscription-UserInfo",
-            "SUBSCRIPTION-USERINFO",
-        ]
-
-        userinfo = None
-        for header_name in possible_headers:
-            userinfo = headers.get(header_name)
-            if userinfo:
-                break
-
-        if not userinfo:
-            return None
-
-        traffic_data = {}
-        for item in userinfo.split(";"):
-            item = item.strip()
-            if "=" in item:
-                key, value = item.split("=", 1)
-                try:
-                    traffic_data[key.strip()] = int(value.strip())
-                except ValueError:
-                    pass
-
-        return traffic_data if traffic_data else None
-
-    def format_traffic_info(self, name: str, traffic_info: Dict[str, int]) -> str:
-        """格式化流量信息输出"""
-        upload = traffic_info.get("upload", 0)
-        download = traffic_info.get("download", 0)
-        total = traffic_info.get("total", 0)
-        expire = traffic_info.get("expire", 0)
-
-        used = upload + download
-        remaining = total - used if total > used else 0
-
-        lines = [f"{name} 流量信息"]
-        lines.append("=" * 30)
-
-        if self.auto_convert_unit:
-            lines.append(f"上传: {self.convert_bytes(upload)}")
-            lines.append(f"下载: {self.convert_bytes(download)}")
-            lines.append(f"已用: {self.convert_bytes(used)}")
-            lines.append(f"总量: {self.convert_bytes(total)}")
-            lines.append(f"剩余: {self.convert_bytes(remaining)}")
-        else:
-            lines.append(f"上传: {upload} bytes")
-            lines.append(f"下载: {download} bytes")
-            lines.append(f"已用: {used} bytes")
-            lines.append(f"总量: {total} bytes")
-            lines.append(f"剩余: {remaining} bytes")
-
-        if total > 0:
-            usage_percent = (used / total) * 100
-            lines.append(f"使用率: {usage_percent:.2f}%")
-
-            bar_length = 20
-            filled = int(bar_length * usage_percent / 100)
-            bar = "█" * filled + "░" * (bar_length - filled)
-            lines.append(f"[{bar}]")
-
-        if expire > 0:
-            expire_date = datetime.fromtimestamp(expire)
-            lines.append(f"到期时间: {expire_date.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        return "\n".join(lines)
-
-    def convert_bytes(self, bytes_value: int) -> str:
-        """将字节转换为人类可读的格式"""
-        for unit in ["B", "KB", "MB", "GB", "TB"]:
-            if bytes_value < 1024.0:
-                return f"{bytes_value:.2f} {unit}"
-            bytes_value /= 1024.0
-        return f"{bytes_value:.2f} PB"
